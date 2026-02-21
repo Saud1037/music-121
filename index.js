@@ -23,6 +23,8 @@ function getQueue(guildId) {
       player: null,
       connection: null,
       playing: false,
+      guildId: null,
+      textChannel: null,
     });
   }
   return queues.get(guildId);
@@ -31,21 +33,31 @@ function getQueue(guildId) {
 async function playSong(queue, song) {
   if (!song) {
     queue.playing = false;
-    queue.connection?.destroy();
+    try { queue.connection?.destroy(); } catch {}
     queues.delete(queue.guildId);
     return;
   }
 
   queue.playing = true;
 
-  const stream = ytdl(song.url, {
-    filter: 'audioonly',
-    quality: 'lowestaudio',
-    highWaterMark: 1 << 25,
-  });
+  try {
+    const stream = ytdl(song.url, {
+      filter: 'audioonly',
+      quality: 'lowestaudio',
+      highWaterMark: 1 << 25,
+    });
 
-  const resource = createAudioResource(stream);
-  queue.player.play(resource);
+    const resource = createAudioResource(stream);
+    queue.player.play(resource);
+  } catch (err) {
+    console.error('Stream error:', err.message);
+    queue.songs.shift();
+    playSong(queue, queue.songs[0]);
+    return;
+  }
+
+  queue.player.removeAllListeners(AudioPlayerStatus.Idle);
+  queue.player.removeAllListeners('error');
 
   queue.player.once(AudioPlayerStatus.Idle, () => {
     queue.songs.shift();
@@ -111,52 +123,53 @@ client.on('messageCreate', async (message) => {
 
     queue.songs.push({ url: songUrl, title: songTitle });
 
-    // لو البوت بالفعل بالروم وعنده player، شغّل مباشرة
-    if (queue.connection && !queue.playing) {
-      playSong(queue, queue.songs[0]);
+    // لو البوت بالفعل موصل، شغّل مباشرة
+    if (queue.connection) {
+      if (!queue.playing) {
+        playSong(queue, queue.songs[0]);
+      } else {
+        message.reply(`✅ أضفت للقائمة: **${songTitle}**`);
+      }
       return;
     }
 
-    if (!queue.playing) {
-      try {
-        const connection = joinVoiceChannel({
-          channelId: voiceChannel.id,
-          guildId: message.guildId,
-          adapterCreator: message.guild.voiceAdapterCreator,
-          selfDeaf: true,
-        });
+    // اتصال جديد
+    try {
+      const connection = joinVoiceChannel({
+        channelId: voiceChannel.id,
+        guildId: message.guildId,
+        adapterCreator: message.guild.voiceAdapterCreator,
+        selfDeaf: true,
+      });
 
-        const player = createAudioPlayer();
-        connection.subscribe(player);
+      const player = createAudioPlayer();
+      connection.subscribe(player);
 
-        queue.connection = connection;
-        queue.player = player;
+      queue.connection = connection;
+      queue.player = player;
 
-        connection.on(VoiceConnectionStatus.Disconnected, async () => {
-          try {
-            await Promise.race([
-              entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-              entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
-            ]);
-          } catch {
-            queue.songs = [];
-            queue.playing = false;
-            connection.destroy();
-            queues.delete(message.guildId);
-          }
-        });
+      connection.on(VoiceConnectionStatus.Disconnected, async () => {
+        try {
+          await Promise.race([
+            entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+            entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+          ]);
+        } catch {
+          queue.songs = [];
+          queue.playing = false;
+          try { connection.destroy(); } catch {}
+          queues.delete(message.guildId);
+        }
+      });
 
-        // انتظر الاتصال يكتمل قبل التشغيل
-        await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-        playSong(queue, queue.songs[0]);
+      // انتظر الاتصال - timeout كبير للـ VPS
+      await entersState(connection, VoiceConnectionStatus.Ready, 60_000);
+      playSong(queue, queue.songs[0]);
 
-      } catch (err) {
-        console.error(err);
-        queues.delete(message.guildId);
-        return message.reply('❌ ما قدرت أتصل بالروم الصوتي.');
-      }
-    } else {
-      message.reply(`✅ أضفت للقائمة: **${songTitle}**`);
+    } catch (err) {
+      console.error('Connection error:', err);
+      queues.delete(message.guildId);
+      return message.reply('❌ ما قدرت أتصل بالروم الصوتي، حاول مرة ثانية.');
     }
   }
 
@@ -171,10 +184,11 @@ client.on('messageCreate', async (message) => {
   // --- STOP ---
   else if (command === 'stop') {
     const queue = queues.get(message.guildId);
-    if (!queue || !queue.playing) return message.reply('❌ ما في شي يشتغل.');
+    if (!queue) return message.reply('❌ ما في شي يشتغل.');
     queue.songs = [];
-    queue.player.stop();
-    queue.connection?.destroy();
+    queue.playing = false;
+    try { queue.player?.stop(); } catch {}
+    try { queue.connection?.destroy(); } catch {}
     queues.delete(message.guildId);
     message.reply('⏹️ وقفت وطلعت من الروم.');
   }
