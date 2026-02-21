@@ -14,8 +14,6 @@ const client = new Client({
 });
 
 const PREFIX = '!';
-
-// queue لكل سيرفر
 const queues = new Map();
 
 function getQueue(guildId) {
@@ -113,15 +111,20 @@ client.on('messageCreate', async (message) => {
 
     queue.songs.push({ url: songUrl, title: songTitle });
 
+    // لو البوت بالفعل بالروم وعنده player، شغّل مباشرة
+    if (queue.connection && !queue.playing) {
+      playSong(queue, queue.songs[0]);
+      return;
+    }
+
     if (!queue.playing) {
       try {
         const connection = joinVoiceChannel({
           channelId: voiceChannel.id,
           guildId: message.guildId,
           adapterCreator: message.guild.voiceAdapterCreator,
+          selfDeaf: true,
         });
-
-        await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
 
         const player = createAudioPlayer();
         connection.subscribe(player);
@@ -129,13 +132,24 @@ client.on('messageCreate', async (message) => {
         queue.connection = connection;
         queue.player = player;
 
-        connection.on(VoiceConnectionStatus.Disconnected, () => {
-          queue.songs = [];
-          queue.playing = false;
-          queues.delete(message.guildId);
+        connection.on(VoiceConnectionStatus.Disconnected, async () => {
+          try {
+            await Promise.race([
+              entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+              entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+            ]);
+          } catch {
+            queue.songs = [];
+            queue.playing = false;
+            connection.destroy();
+            queues.delete(message.guildId);
+          }
         });
 
+        // انتظر الاتصال يكتمل قبل التشغيل
+        await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
         playSong(queue, queue.songs[0]);
+
       } catch (err) {
         console.error(err);
         queues.delete(message.guildId);
