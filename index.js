@@ -8,14 +8,16 @@ const {
   entersState,
   StreamType
 } = require('@discordjs/voice');
-const youtubedl = require('youtube-dl-exec');
-const ytdl = youtubedl.create('/usr/local/bin/yt-dlp');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const ytSearch = require('yt-search');
 const prism = require('prism-media');
 const ffmpegPath = require('ffmpeg-static');
 require('dotenv').config();
 
-const COOKIES_PATH = '/root/music-121/cookies.txt';
+const YTDLP = '/usr/local/bin/yt-dlp';
+const COOKIES = '/root/music-121/cookies.txt';
 
 const client = new Client({
   intents: [
@@ -44,18 +46,15 @@ function getQueue(guildId) {
 }
 
 async function getStreamUrl(url) {
-  const info = await ytdl(url, {
-    dumpSingleJson: true,
-    format: 'bestaudio/best',
-    noCheckCertificates: true,
-    noWarnings: true,
-    cookies: COOKIES_PATH,
-    addHeader: [
-      'referer:youtube.com',
-      'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    ],
-  });
-  return info.url;
+  const { stdout } = await execFileAsync(YTDLP, [
+    '--cookies', COOKIES,
+    '--format', 'bestaudio/best',
+    '--no-check-certificates',
+    '--no-warnings',
+    '--get-url',
+    url,
+  ]);
+  return stdout.trim().split('\n')[0];
 }
 
 async function playSong(queue, song) {
@@ -86,10 +85,7 @@ async function playSong(queue, song) {
       ],
     });
 
-    const resource = createAudioResource(ffmpeg, {
-      inputType: StreamType.Raw,
-    });
-
+    const resource = createAudioResource(ffmpeg, { inputType: StreamType.Raw });
     queue.player.play(resource);
 
   } catch (err) {
@@ -140,14 +136,15 @@ client.on('messageCreate', async (message) => {
 
     if (isUrl) {
       try {
-        const info = await ytdl(query, {
-          dumpSingleJson: true,
-          noCheckCertificates: true,
-          noWarnings: true,
-          cookies: COOKIES_PATH,
-        });
+        const { stdout } = await execFileAsync(YTDLP, [
+          '--cookies', COOKIES,
+          '--no-check-certificates',
+          '--no-warnings',
+          '--print', 'title',
+          query,
+        ]);
         songUrl = query;
-        songTitle = info.title;
+        songTitle = stdout.trim();
       } catch {
         return message.reply('❌ ما قدرت أجيب معلومات الرابط.');
       }
