@@ -46,6 +46,7 @@ async function getStreamUrl(url) {
     format: 'bestaudio/best',
     noCheckCertificates: true,
     noWarnings: true,
+    cookies: '/root/music-121/cookies.txt',
     addHeader: [
       'referer:youtube.com',
       'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
