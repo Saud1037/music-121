@@ -9,10 +9,13 @@ const {
   StreamType
 } = require('@discordjs/voice');
 const youtubedl = require('youtube-dl-exec');
+const ytdl = youtubedl.create('/usr/local/bin/yt-dlp');
 const ytSearch = require('yt-search');
 const prism = require('prism-media');
 const ffmpegPath = require('ffmpeg-static');
 require('dotenv').config();
+
+const COOKIES_PATH = '/root/music-121/cookies.txt';
 
 const client = new Client({
   intents: [
@@ -41,12 +44,12 @@ function getQueue(guildId) {
 }
 
 async function getStreamUrl(url) {
-  const info = await youtubedl(url, {
+  const info = await ytdl(url, {
     dumpSingleJson: true,
     format: 'bestaudio/best',
     noCheckCertificates: true,
     noWarnings: true,
-    cookies: '/root/music-121/cookies.txt',
+    cookies: COOKIES_PATH,
     addHeader: [
       'referer:youtube.com',
       'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -125,7 +128,6 @@ client.on('messageCreate', async (message) => {
   const args = message.content.slice(PREFIX.length).trim().split(/ +/);
   const command = args.shift().toLowerCase();
 
-  // --- PLAY ---
   if (command === 'play' || command === 'p') {
     const voiceChannel = message.member?.voice?.channel;
     if (!voiceChannel) return message.reply('❌ لازم تكون في روم صوتي!');
@@ -134,15 +136,15 @@ client.on('messageCreate', async (message) => {
     if (!query) return message.reply('❌ اكتب اسم الأغنية أو رابط.');
 
     let songUrl, songTitle;
-
     const isUrl = query.startsWith('http');
 
     if (isUrl) {
       try {
-        const info = await youtubedl(query, {
+        const info = await ytdl(query, {
           dumpSingleJson: true,
           noCheckCertificates: true,
           noWarnings: true,
+          cookies: COOKIES_PATH,
         });
         songUrl = query;
         songTitle = info.title;
@@ -166,7 +168,6 @@ client.on('messageCreate', async (message) => {
     queue.textChannel = message.channel;
     queue.songs.push({ url: songUrl, title: songTitle });
 
-    // لو البوت موصل بالفعل
     if (queue.connection) {
       if (!queue.playing) {
         playSong(queue, queue.songs[0]);
@@ -176,7 +177,6 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
-    // اتصال جديد
     try {
       const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
@@ -215,7 +215,6 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // --- SKIP ---
   else if (command === 'skip' || command === 's') {
     const queue = queues.get(message.guildId);
     if (!queue || !queue.playing) return message.reply('❌ ما في شي يشتغل.');
@@ -223,7 +222,6 @@ client.on('messageCreate', async (message) => {
     message.reply('⏭️ تم التخطي.');
   }
 
-  // --- STOP ---
   else if (command === 'stop') {
     const queue = queues.get(message.guildId);
     if (!queue) return message.reply('❌ ما في شي يشتغل.');
@@ -235,7 +233,6 @@ client.on('messageCreate', async (message) => {
     message.reply('⏹️ وقفت وطلعت من الروم.');
   }
 
-  // --- QUEUE ---
   else if (command === 'queue' || command === 'q') {
     const queue = queues.get(message.guildId);
     if (!queue || queue.songs.length === 0) return message.reply('📭 القائمة فارغة.');
@@ -243,7 +240,6 @@ client.on('messageCreate', async (message) => {
     message.reply(`📋 **القائمة:**\n${list}`);
   }
 
-  // --- HELP ---
   else if (command === 'help') {
     message.reply(
       `**الأوامر:**\n` +
